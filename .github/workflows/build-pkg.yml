@@ -3,6 +3,20 @@ name: Build PKG
 # Compila LLVM para la consola (job 1, con cache para poder reanudar) y despues el ELF + EBOOT + PKG (job 2).
 # Se trabaja en C:\w (no en el workspace de Actions) porque el disco del workspace es pequeño.
 # Si cambias las herramientas fijadas (OpenOrbis, Mesa, porting-kit...), sube la version de la key 'ps4-tools-v1'.
+#
+# INTERRUPTORES (Run workflow). Todo lo nuevo es opcional y los fallos de lo opcional NO tiran el PKG:
+#   apply_patches   Lista de parches de rpcs3-ps4/ps4-port/patches/<nombre>.patch (o 'all'), separados por coma.
+#                   Cada parche es un cambio de codigo independiente que se puede encender o apagar aqui.
+#                   Un parche que no aplica se omite con aviso (salvo patches_strict). Los parches se generan con
+#                   'git diff' desde la RAIZ del repo y no pueden tocar los 4 archivos que forman la clave de cache
+#                   de LLVM ni .github/ (se bloquean solos).
+#   patches_strict  Si esta activo, un parche que falla detiene la build.
+#   cmake_extra     Opciones -DNOMBRE=valor extra para configurar (p. ej. -DUSE_LTO=OFF). Validadas.
+#   export_symbols  Lista de simbolos del ELF (llvm-nm) y resuelve hot_offsets a nombres de funcion.
+#   hot_offsets     Offsets 'elf+0x...' del perfilador (hex, separados por espacio) que se resuelven a funcion.
+#   save_elf        Sube el ELF sin strip como artefacto (7 dias) para objdump/desensamblado.
+#   tuning_pack     Zip con archivos de ajustes en tiempo de ejecucion (flags, plantillas) para copiar a /data/rpcs3.
+# Verificaciones siempre activas: el SHA-256 del PKG contra su .sha256 (error) y el del ELF contra el manifiesto (aviso).
 
 on:
   workflow_dispatch:
@@ -11,6 +25,34 @@ on:
         description: 'Publicar el PKG como pre-release al terminar'
         type: boolean
         default: false
+      apply_patches:
+        description: 'Parches opcionales (nombres sin .patch, separados por coma; all = todos). Vacio = codigo base'
+        type: string
+        default: ''
+      patches_strict:
+        description: 'Detener la build si un parche pedido no aplica'
+        type: boolean
+        default: false
+      cmake_extra:
+        description: 'Opciones CMake extra, solo -DNOMBRE=valor separadas por espacio (ej: -DUSE_LTO=OFF)'
+        type: string
+        default: ''
+      export_symbols:
+        description: 'Exportar simbolos del ELF y resolver hot_offsets'
+        type: boolean
+        default: true
+      hot_offsets:
+        description: 'Offsets del perfilador a resolver (hex sin 0x, separados por espacio)'
+        type: string
+        default: 'd06e76 293dd70 1113100 2919f30 2921870 2957cf0 cdd600 cd4f50 d2f210 f44110 1112510 2abec20 6e3d30 36e6f0'
+      save_elf:
+        description: 'Subir el ELF sin strip como artefacto (7 dias)'
+        type: boolean
+        default: false
+      tuning_pack:
+        description: 'Generar el zip de ajustes en tiempo de ejecucion'
+        type: boolean
+        default: true
   push:
     tags:
       - 'v*'
@@ -36,7 +78,6 @@ jobs:
           git clone --quiet --depth 1 --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" C:\w
           git -C C:\w fetch --quiet --depth 1 origin ${{ github.sha }}
           git -C C:\w -c advice.detachedHead=false checkout --quiet FETCH_HEAD
-
       - name: Restaurar cache de herramientas
         id: tools
         uses: actions/cache/restore@v4
@@ -74,7 +115,6 @@ jobs:
           $d = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($h))
           $s = ([BitConverter]::ToString($d) -replace '-', '').Substring(0, 16).ToLower()
           "key=llvm-$s" >> $env:GITHUB_OUTPUT
-
       - name: Restaurar LLVM (si hay progreso previo)
         uses: actions/cache/restore@v4
         with:
@@ -86,7 +126,6 @@ jobs:
           key: ${{ steps.key.outputs.key }}-${{ github.run_id }}
           restore-keys: |
             ${{ steps.key.outputs.key }}-
-
       - name: Compilar LLVM para la consola
         timeout-minutes: 330
         shell: pwsh
@@ -94,7 +133,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force C:\logs | Out-Null
           ./ps4-port/build-llvm.ps1 -Sdk $env:SDK -CompilerBin $env:LLVM_BIN -Jobs 4 *>&1 | Tee-Object C:\logs\llvm.log
-
       - name: Guardar progreso de LLVM
         if: always()
         uses: actions/cache/save@v4
@@ -126,6 +164,12 @@ jobs:
     timeout-minutes: 360
     permissions:
       contents: write
+    env:
+      # En un push de etiqueta no hay inputs: ahi valen los valores por defecto de abajo.
+      OPT_SYMBOLS: ${{ github.event_name != 'workflow_dispatch' || inputs.export_symbols }}
+      OPT_SAVE_ELF: ${{ github.event_name == 'workflow_dispatch' && inputs.save_elf }}
+      OPT_PACK: ${{ github.event_name != 'workflow_dispatch' || inputs.tuning_pack }}
+      HOT_OFFSETS: ${{ inputs.hot_offsets || 'd06e76 293dd70 1113100 2919f30 2921870 2957cf0 cdd600 cd4f50 d2f210 f44110 1112510 2abec20 6e3d30 36e6f0' }}
     steps:
       - name: Clonar el repo en C:\w
         shell: pwsh
@@ -134,7 +178,6 @@ jobs:
           git clone --quiet --depth 1 --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" C:\w
           git -C C:\w fetch --quiet --depth 1 origin ${{ github.sha }}
           git -C C:\w -c advice.detachedHead=false checkout --quiet FETCH_HEAD
-
       - name: Restaurar cache de herramientas
         uses: actions/cache/restore@v4
         with:
@@ -159,7 +202,6 @@ jobs:
           $d = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($h))
           $s = ([BitConverter]::ToString($d) -replace '-', '').Substring(0, 16).ToLower()
           "key=llvm-$s" >> $env:GITHUB_OUTPUT
-
       - name: Restaurar LLVM compilado
         uses: actions/cache/restore@v4
         with:
@@ -173,18 +215,73 @@ jobs:
             ${{ steps.key.outputs.key }}-
           fail-on-cache-miss: true
 
+      # Va DESPUES de calcular la clave de cache de LLVM y de restaurarla: un parche no puede alterarla.
+      - name: Aplicar parches opcionales (interruptores)
+        shell: pwsh
+        working-directory: C:\w
+        env:
+          PATCH_LIST: ${{ inputs.apply_patches }}
+          PATCH_STRICT: ${{ github.event_name == 'workflow_dispatch' && inputs.patches_strict }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force C:\logs | Out-Null
+          $report = 'C:\logs\patches.txt'
+          $dir = 'rpcs3-ps4/ps4-port/patches'
+          $names = @($env:PATCH_LIST -split '[,;\s]+' | Where-Object { $_ })
+          if (-not $names.Count) {
+            'Sin parches pedidos (apply_patches vacio): se compila el codigo base.' | Set-Content -LiteralPath $report
+            Get-Content -LiteralPath $report
+            exit 0
+          }
+          if ($names -contains 'all') {
+            $names = @(Get-ChildItem -LiteralPath $dir -Filter *.patch -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object BaseName)
+          }
+          $blocked = @('rpcs3-ps4/ps4-port/build-llvm.ps1','rpcs3-ps4/ps4-port/llvm-toolchain.cmake','rpcs3-ps4/ps4-port/prepare-llvm.py','rpcs3-ps4/ps4-port/fetch-llvm.py')
+          $lines = New-Object System.Collections.Generic.List[string]
+          $bad = 0
+          foreach ($n in $names) {
+            if ($n -notmatch '^[A-Za-z0-9_.-]+$') { throw "Nombre de parche no valido: $n" }
+            $file = "$dir/$n.patch"
+            if (-not (Test-Path -LiteralPath $file)) { $lines.Add("FALTA      $n (no existe $file)"); $bad++; continue }
+            $stat = @(git apply --numstat $file 2>&1)
+            if ($LASTEXITCODE) { $lines.Add("INVALIDO   $n : $($stat -join ' ')"); $bad++; continue }
+            $touched = @($stat | ForEach-Object { ($_ -split "`t")[2] })
+            $hit = @($touched | Where-Object { ($blocked -contains $_) -or ($_ -like '.github/*') })
+            if ($hit.Count) { $lines.Add("BLOQUEADO  $n : toca $($hit -join ', ') (invalidaria la cache de LLVM o el CI)"); $bad++; continue }
+            $out = @(git apply --check --ignore-whitespace $file 2>&1)
+            if ($LASTEXITCODE) { $lines.Add("NO APLICA  $n (se omite): $($out -join ' ')"); $bad++; continue }
+            git apply --ignore-whitespace --whitespace=nowarn $file
+            if ($LASTEXITCODE) { throw "git apply fallo tras --check en $n" }
+            $h = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.Substring(0, 12)
+            $lines.Add("APLICADO   $n (sha256 $h): $($touched -join ', ')")
+          }
+          $lines | Set-Content -LiteralPath $report
+          $lines | ForEach-Object { Write-Output $_ }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (@('### Parches opcionales', '```') + $lines + @('```'))
+          if ($bad) {
+            if ($env:PATCH_STRICT -eq 'true') { throw "$bad parche(s) no se aplicaron y patches_strict esta activo" }
+            Write-Output "::warning::$bad parche(s) omitidos (ver patches.txt en el artefacto package-logs)"
+          }
+
       - name: Configurar
         shell: pwsh
         working-directory: C:\w\rpcs3-ps4
+        env:
+          CMAKE_EXTRA: ${{ inputs.cmake_extra }}
         run: |
           New-Item -ItemType Directory -Force C:\logs | Out-Null
           $v = [regex]::Match((Get-Content rpcs3/util/ps4_build_version.hpp -Raw), 'ps4_build_version\[\]\s*=\s*"([0-9]+\.[0-9]{2})"').Groups[1].Value
           if (-not $v) { throw 'No pude leer la version de ps4_build_version.hpp' }
           "VERSION=$v" >> $env:GITHUB_ENV
+          $extra = @()
+          foreach ($t in @($env:CMAKE_EXTRA -split '\s+' | Where-Object { $_ })) {
+            if ($t -notmatch '^-D[A-Za-z0-9_]+(:[A-Z]+)?=[A-Za-z0-9_./:+-]*$') { throw "cmake_extra no valido: $t (solo -DNOMBRE=valor)" }
+            $extra += $t
+          }
+          if ($extra.Count) { Write-Output "CMake extra: $($extra -join ' ')" }
           $ninja = "$PWD/ps4-port/.build-tools/ninja.exe"
-          cmake -S . -B ps4-port/.build-abi -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DRPCS3_PS4_PORT=ON "-DCMAKE_TOOLCHAIN_FILE=ps4-port/toolchain.cmake" "-DRPCS3_PS4_SDK=$env:SDK" "-DRPCS3_PS4_LLVM_BIN=$env:LLVM_BIN" -DRPCS3_PS4_WITH_LLVM=ON 2>&1 | Tee-Object C:\logs\configure.log
+          cmake -S . -B ps4-port/.build-abi -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DRPCS3_PS4_PORT=ON "-DCMAKE_TOOLCHAIN_FILE=ps4-port/toolchain.cmake" "-DRPCS3_PS4_SDK=$env:SDK" "-DRPCS3_PS4_LLVM_BIN=$env:LLVM_BIN" -DRPCS3_PS4_WITH_LLVM=ON @extra 2>&1 | Tee-Object C:\logs\configure.log
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
       - name: Compilar el ELF
         timeout-minutes: 330
         shell: pwsh
@@ -192,12 +289,127 @@ jobs:
         run: |
           cmake --build ps4-port/.build-abi --target rpcs3_ps4_elf -j 4 2>&1 | Tee-Object C:\logs\build-elf.log
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
       - name: Empaquetar (EBOOT + PKG)
         shell: pwsh
         working-directory: C:\w\rpcs3-ps4
         run: |
           ./ps4-port/package-native.ps1 -Sdk $env:SDK -LlvmTools $env:LLVM_BIN -Version $env:VERSION *>&1 | Tee-Object C:\logs\package.log
+      # Verificacion: el PKG debe coincidir con su .sha256 (error) y el ELF con el manifiesto (aviso).
+      - name: Verificar PKG y ELF (hashes)
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4\ps4-port
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = Get-ChildItem dist -Filter *.pkg | Select-Object -First 1
+          if (-not $pkg) { throw 'No hay .pkg en dist' }
+          $shaFile = Get-ChildItem dist -Filter *.sha256 | Select-Object -First 1
+          if (-not $shaFile) { throw 'No hay .sha256 en dist' }
+          $expected = ((Get-Content -LiteralPath $shaFile.FullName -Raw).Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -LiteralPath $pkg.FullName -Algorithm SHA256).Hash
+          if ($expected -ne $actual) { throw "SHA-256 del PKG no coincide: archivo $actual, .sha256 $expected" }
+          $rows = @("PKG: $($pkg.Name) ($([math]::Round($pkg.Length / 1MB, 1)) MiB) sha256 $actual OK")
+          $mf = Get-ChildItem dist -Filter build-manifest-*.json | Select-Object -First 1
+          $elf = '.build-abi/ps4-port/rpcs3_ps4.elf'
+          if ($mf -and (Test-Path -LiteralPath $elf)) {
+            $m = Get-Content -LiteralPath $mf.FullName -Raw | ConvertFrom-Json
+            $elfHash = (Get-FileHash -LiteralPath $elf -Algorithm SHA256).Hash
+            if ($m.elf_sha256 -eq $elfHash) { $rows += "ELF: sha256 $elfHash coincide con el manifiesto" }
+            else {
+              $rows += "ELF: sha256 $elfHash NO coincide con el manifiesto ($($m.elf_sha256))"
+              Write-Output '::warning::El ELF del build no coincide con elf_sha256 del manifiesto; no uses estos simbolos con otro PKG'
+            }
+            $rows += "build_stamp: $($m.build_stamp)"
+          }
+          $rows | ForEach-Object { Write-Output $_ }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (@('### Verificacion', '```') + $rows + @('```'))
+
+      # Simbolos del ELF: permite saber que funcion es cada 'elf+0x...' del perfilador sin otra ronda de pruebas.
+      - name: Simbolos del ELF y offsets del perfilador
+        if: success() && env.OPT_SYMBOLS == 'true'
+        continue-on-error: true
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $elf = 'ps4-port/.build-abi/ps4-port/rpcs3_ps4.elf'
+          New-Item -ItemType Directory -Force C:\symbols | Out-Null
+          $nm = Join-Path $env:LLVM_BIN 'llvm-nm.exe'
+          & $nm -C -n --defined-only --print-size $elf | Set-Content -LiteralPath C:\symbols\rpcs3_ps4.sym.txt -Encoding ascii
+          if ($LASTEXITCODE) { throw "llvm-nm fallo ($LASTEXITCODE)" }
+          (Get-FileHash -Algorithm SHA256 -LiteralPath $elf).Hash | Set-Content -LiteralPath C:\symbols\elf.sha256 -Encoding ascii
+
+          $addrs = New-Object 'System.Collections.Generic.List[uint64]'
+          $sizes = New-Object 'System.Collections.Generic.List[uint64]'
+          $names = New-Object 'System.Collections.Generic.List[string]'
+          foreach ($line in [System.IO.File]::ReadLines('C:\symbols\rpcs3_ps4.sym.txt')) {
+            if ($line -match '^([0-9a-fA-F]+) ([0-9a-fA-F]+) [TtWw] (.+)$') {
+              $addrs.Add([Convert]::ToUInt64($Matches[1], 16)); $sizes.Add([Convert]::ToUInt64($Matches[2], 16)); $names.Add($Matches[3])
+            } elseif ($line -match '^([0-9a-fA-F]+) [TtWw] (.+)$') {
+              $addrs.Add([Convert]::ToUInt64($Matches[1], 16)); $sizes.Add([uint64]0); $names.Add($Matches[2])
+            }
+          }
+          $A = $addrs.ToArray()
+          $res = New-Object System.Collections.Generic.List[string]
+          $res.Add("Funciones leidas: $($A.Length). El offset 'elf+0x..' se prueba como direccion directa y sumando 0x400000 (inicio del texto).")
+          foreach ($tok in @($env:HOT_OFFSETS -split '[,;\s]+' | Where-Object { $_ })) {
+            $t = $tok -replace '^(?i)(elf\+)?0x', ''
+            if ($t -notmatch '^[0-9a-fA-F]{1,12}$') { $res.Add("elf+0x$t : valor no valido"); continue }
+            $off = [Convert]::ToUInt64($t, 16)
+            foreach ($base in @([uint64]0, [uint64]0x400000)) {
+              $q = [uint64]($off + $base)
+              $i = [Array]::BinarySearch($A, $q)
+              if ($i -lt 0) { $i = (-bnot $i) - 1 }
+              if ($i -lt 0) { $res.Add(('elf+0x{0:x} (base 0x{1:x}) -> antes del primer simbolo' -f $off, $base)); continue }
+              $delta = $q - $A[$i]
+              $inside = ($sizes[$i] -eq 0) -or ($delta -lt $sizes[$i])
+              $res.Add(('elf+0x{0:x} (base 0x{1:x}) -> {2} +0x{3:x} (tam 0x{4:x}){5}' -f $off, $base, $names[$i], $delta, $sizes[$i], $(if ($inside) { '' } else { ' [fuera del tam.: probablemente otro codigo sin simbolo]' })))
+            }
+          }
+          $res | Set-Content -LiteralPath C:\symbols\hot-symbols.txt
+          $res | ForEach-Object { Write-Output $_ }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value (@('### Offsets del perfilador', '```') + $res + @('```'))
+
+      # Ajustes en tiempo de ejecucion (no cambian el PKG): se copian a /data/rpcs3 y se quitan cuando se quiera.
+      - name: Zip de ajustes en tiempo de ejecucion
+        if: success() && env.OPT_PACK == 'true'
+        continue-on-error: true
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Save-Lf([string]$Path, [string[]]$Lines) { [IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n")) }
+          $v = $env:VERSION
+          $root = "C:\pack\rpcs3-ps4-tuning-pack-$v"
+          New-Item -ItemType Directory -Force "$root\perfilador", "$root\plantillas" | Out-Null
+          Save-Lf "$root\perfilador\profile.flag" @('cpuusage=1', 'rsx=1')
+          Save-Lf "$root\plantillas\NPEB02369_patch.yml.plantilla" @(
+            '# Plantilla para un parche de GTA San Andreas (NPEB02369). NO es un parche: no trae direcciones.',
+            '# Renombrala a NPEB02369_patch.yml solo cuando tengas direcciones reales del ejecutable de ESTA version.',
+            '# El port lee /data/rpcs3/patch.yml, imported_patch.yml y <TITLE_ID>_patch.yml (menu de parches con R1).',
+            'Version: 1.2')
+          Save-Lf "$root\LEEME.txt" @(
+            "Ajustes en tiempo de ejecucion para RPCS3 PS4 $v",
+            '',
+            'Nada de esto cambia el PKG. Se copia por FTP (GoldHEN, puerto 2121) a /data/rpcs3 y se borra para revertirlo.',
+            '',
+            'perfilador/profile.flag',
+            '  Copiar a /data/rpcs3/profile.flag. Activa el perfilador (cpuusage=1 y rsx=1).',
+            '  Solo se lee al abrir el emulador: cerrarlo del todo y reabrirlo.',
+            '  Confirmar en startup.log: PROF init: light (profile.flag). Borrarlo al terminar.',
+            '',
+            'plantillas/',
+            '  Plantilla vacia de parche para GTA SA. No sirve hasta tener direcciones reales.',
+            '',
+            'repo-tuning/ (si existe)',
+            '  Archivos que el repo trae en rpcs3-ps4/ps4-port/tuning. Cada uno lleva su nota arriba.',
+            '',
+            'Aviso: los archivos .features van en /data/rpcs3/custom_configs/<TITLE_ID>.features.',
+            'NO los renombres a config_<TITLE_ID>.yml: pisarias la configuracion del juego.')
+          $repoTuning = 'ps4-port/tuning'
+          if (Test-Path -LiteralPath $repoTuning) { Copy-Item -LiteralPath $repoTuning -Destination "$root\repo-tuning" -Recurse }
+          $zip = "C:\w\rpcs3-ps4\ps4-port\dist\rpcs3-ps4-tuning-pack-$v.zip"
+          Compress-Archive -Path "$root\*" -DestinationPath $zip -Force
+          Get-Item -LiteralPath $zip | Select-Object Name, Length
 
       - name: Resumen de errores
         if: always()
@@ -215,6 +427,34 @@ jobs:
             C:\w\rpcs3-ps4\ps4-port\.build-abi\CMakeFiles\CMakeConfigureLog.yaml
           if-no-files-found: ignore
 
+      - name: Subir simbolos
+        if: success() && env.OPT_SYMBOLS == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-ps4-symbols
+          path: C:\symbols
+          if-no-files-found: warn
+
+      - name: Subir ELF sin strip (opcional)
+        if: success() && env.OPT_SAVE_ELF == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-ps4-elf
+          path: C:\w\rpcs3-ps4\ps4-port\.build-abi\ps4-port\rpcs3_ps4.elf
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Subir zip de ajustes
+        if: success() && env.OPT_PACK == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-ps4-tuning-pack
+          path: C:\w\rpcs3-ps4\ps4-port\dist\rpcs3-ps4-tuning-pack-*.zip
+          if-no-files-found: warn
+
       - name: Subir PKG
         uses: actions/upload-artifact@v4
         with:
@@ -231,5 +471,5 @@ jobs:
         working-directory: C:\w\rpcs3-ps4\ps4-port\dist
         run: |
           $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { "ci-$env:VERSION-$env:GITHUB_RUN_NUMBER" }
-          $files = @(Get-ChildItem -File *.pkg, *.sha256, build-manifest-*.json | ForEach-Object Name)
+          $files = @(Get-ChildItem -File *.pkg, *.sha256, build-manifest-*.json, *tuning-pack*.zip | ForEach-Object Name)
           gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title "RPCS3 PS4 $env:VERSION ($tag)" --notes "Build automatico del fork. Sin probar en consola salvo que se indique."
