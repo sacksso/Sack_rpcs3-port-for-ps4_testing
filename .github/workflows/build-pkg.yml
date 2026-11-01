@@ -1,0 +1,235 @@
+name: Build PKG
+
+# Compila LLVM para la consola (job 1, con cache para poder reanudar) y despues el ELF + EBOOT + PKG (job 2).
+# Se trabaja en C:\w (no en el workspace de Actions) porque el disco del workspace es pequeño.
+# Si cambias las herramientas fijadas (OpenOrbis, Mesa, porting-kit...), sube la version de la key 'ps4-tools-v1'.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publicar el PKG como pre-release al terminar'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+      - 'sack-*'
+
+concurrency:
+  group: build-pkg
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  llvm:
+    name: LLVM para PS4
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Clonar el repo en C:\w
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          git clone --quiet --depth 1 --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" C:\w
+          git -C C:\w fetch --quiet --depth 1 origin ${{ github.sha }}
+          git -C C:\w -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+
+      - name: Restaurar cache de herramientas
+        id: tools
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\tools
+            C:\w\orbis-porting-kit
+            C:\w\orbis-mesa-bundle
+            C:\w\rpcs3-ps4\ps4-port\deps\abseil-cpp
+            C:\w\rpcs3-ps4\ps4-port\.build-tools
+          key: ps4-tools-v1
+
+      - name: Preparar herramientas y dependencias
+        shell: pwsh
+        run: C:/w/.github/scripts/ci-prepare.ps1 -Root C:/w -Tools C:/tools
+
+      - name: Guardar cache de herramientas
+        if: steps.tools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\tools
+            C:\w\orbis-porting-kit
+            C:\w\orbis-mesa-bundle
+            C:\w\rpcs3-ps4\ps4-port\deps\abseil-cpp
+            C:\w\rpcs3-ps4\ps4-port\.build-tools
+          key: ps4-tools-v1
+
+      - name: Clave de cache de LLVM
+        id: key
+        shell: pwsh
+        run: |
+          $files = 'ps4-port/build-llvm.ps1','ps4-port/llvm-toolchain.cmake','ps4-port/prepare-llvm.py','ps4-port/fetch-llvm.py'
+          $h = ($files | ForEach-Object { (Get-FileHash "C:/w/rpcs3-ps4/$_" -Algorithm SHA256).Hash }) -join ''
+          $d = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($h))
+          $s = ([BitConverter]::ToString($d) -replace '-', '').Substring(0, 16).ToLower()
+          "key=llvm-$s" >> $env:GITHUB_OUTPUT
+
+      - name: Restaurar LLVM (si hay progreso previo)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\w\rpcs3-ps4\ps4-port\deps\llvm-project-*
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-host
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-orbis
+            C:\w\rpcs3-ps4\ps4-port\.build-native-package
+          key: ${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ steps.key.outputs.key }}-
+
+      - name: Compilar LLVM para la consola
+        timeout-minutes: 330
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          New-Item -ItemType Directory -Force C:\logs | Out-Null
+          ./ps4-port/build-llvm.ps1 -Sdk $env:SDK -CompilerBin $env:LLVM_BIN -Jobs 4 *>&1 | Tee-Object C:\logs\llvm.log
+
+      - name: Guardar progreso de LLVM
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\w\rpcs3-ps4\ps4-port\deps\llvm-project-*
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-host
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-orbis
+            C:\w\rpcs3-ps4\ps4-port\.build-native-package
+          key: ${{ steps.key.outputs.key }}-${{ github.run_id }}
+
+      - name: Resumen de errores
+        if: always()
+        shell: pwsh
+        run: C:/w/.github/scripts/ci-summary.ps1 -LogDir C:/logs -Title 'LLVM'
+
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-logs
+          path: C:\logs
+          if-no-files-found: ignore
+
+  package:
+    name: ELF + PKG
+    needs: llvm
+    runs-on: windows-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - name: Clonar el repo en C:\w
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          git clone --quiet --depth 1 --no-checkout "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" C:\w
+          git -C C:\w fetch --quiet --depth 1 origin ${{ github.sha }}
+          git -C C:\w -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+
+      - name: Restaurar cache de herramientas
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\tools
+            C:\w\orbis-porting-kit
+            C:\w\orbis-mesa-bundle
+            C:\w\rpcs3-ps4\ps4-port\deps\abseil-cpp
+            C:\w\rpcs3-ps4\ps4-port\.build-tools
+          key: ps4-tools-v1
+
+      - name: Preparar herramientas y dependencias
+        shell: pwsh
+        run: C:/w/.github/scripts/ci-prepare.ps1 -Root C:/w -Tools C:/tools
+
+      - name: Clave de cache de LLVM
+        id: key
+        shell: pwsh
+        run: |
+          $files = 'ps4-port/build-llvm.ps1','ps4-port/llvm-toolchain.cmake','ps4-port/prepare-llvm.py','ps4-port/fetch-llvm.py'
+          $h = ($files | ForEach-Object { (Get-FileHash "C:/w/rpcs3-ps4/$_" -Algorithm SHA256).Hash }) -join ''
+          $d = [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($h))
+          $s = ([BitConverter]::ToString($d) -replace '-', '').Substring(0, 16).ToLower()
+          "key=llvm-$s" >> $env:GITHUB_OUTPUT
+
+      - name: Restaurar LLVM compilado
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\w\rpcs3-ps4\ps4-port\deps\llvm-project-*
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-host
+            C:\w\rpcs3-ps4\ps4-port\.build-llvm-orbis
+            C:\w\rpcs3-ps4\ps4-port\.build-native-package
+          key: ${{ steps.key.outputs.key }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ steps.key.outputs.key }}-
+          fail-on-cache-miss: true
+
+      - name: Configurar
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          New-Item -ItemType Directory -Force C:\logs | Out-Null
+          $v = [regex]::Match((Get-Content rpcs3/util/ps4_build_version.hpp -Raw), 'ps4_build_version\[\]\s*=\s*"([0-9]+\.[0-9]{2})"').Groups[1].Value
+          if (-not $v) { throw 'No pude leer la version de ps4_build_version.hpp' }
+          "VERSION=$v" >> $env:GITHUB_ENV
+          $ninja = "$PWD/ps4-port/.build-tools/ninja.exe"
+          cmake -S . -B ps4-port/.build-abi -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DRPCS3_PS4_PORT=ON -DCMAKE_TOOLCHAIN_FILE=ps4-port/toolchain.cmake "-DRPCS3_PS4_SDK=$env:SDK" "-DRPCS3_PS4_LLVM_BIN=$env:LLVM_BIN" -DRPCS3_PS4_WITH_LLVM=ON 2>&1 | Tee-Object C:\logs\configure.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Compilar el ELF
+        timeout-minutes: 330
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          cmake --build ps4-port/.build-abi --target rpcs3_ps4_elf -j 4 2>&1 | Tee-Object C:\logs\build-elf.log
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Empaquetar (EBOOT + PKG)
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4
+        run: |
+          ./ps4-port/package-native.ps1 -Sdk $env:SDK -LlvmTools $env:LLVM_BIN -Version $env:VERSION *>&1 | Tee-Object C:\logs\package.log
+
+      - name: Resumen de errores
+        if: always()
+        shell: pwsh
+        run: C:/w/.github/scripts/ci-summary.ps1 -LogDir C:/logs -Title 'ELF + PKG'
+
+      - name: Subir logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-logs
+          path: |
+            C:\logs
+            C:\w\rpcs3-ps4\ps4-port\.build-abi\.ninja_log
+            C:\w\rpcs3-ps4\ps4-port\.build-abi\CMakeFiles\CMakeConfigureLog.yaml
+          if-no-files-found: ignore
+
+      - name: Subir PKG
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcs3-ps4-pkg
+          path: |
+            C:\w\rpcs3-ps4\ps4-port\dist\*.pkg
+            C:\w\rpcs3-ps4\ps4-port\dist\*.sha256
+            C:\w\rpcs3-ps4\ps4-port\dist\build-manifest-*.json
+          if-no-files-found: error
+
+      - name: Publicar pre-release
+        if: success() && (startsWith(github.ref, 'refs/tags/') || inputs.publish_release)
+        shell: pwsh
+        working-directory: C:\w\rpcs3-ps4\ps4-port\dist
+        run: |
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { "ci-$env:VERSION-$env:GITHUB_RUN_NUMBER" }
+          $files = @(Get-ChildItem -File *.pkg, *.sha256, build-manifest-*.json | ForEach-Object Name)
+          gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title "RPCS3 PS4 $env:VERSION ($tag)" --notes "Build automatico del fork. Sin probar en consola salvo que se indique."
