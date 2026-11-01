@@ -30,15 +30,24 @@ $spec = @{
     'cfg_browser_test'      = @{ Inc = @('ps4-port/tests/cfg-mocks', 'ps4-port/tests/policy-mocks') }
     'i18n_test'             = @{ Inc = @('3rdparty/stblib/stb') }
     'fenv_test'             = @{ Libs = @('-lpthread') }
-    'disc_stream_test'      = @{ Src = @('rpcs3/Crypto/aes.cpp') }
+    'disc_stream_test'      = @{ Src = @('rpcs3/Crypto/aes.cpp', 'rpcs3/Crypto/aesni.cpp') }
     'fs_eio_test'           = @{ Std = 'c++23' }
     'xmb_folders_test'      = @{ Std = 'c++23' }
     'xmb_media_test'        = @{ Std = 'c++23' }
+    # Estos dos reciben como argumento un directorio temporal que no debe existir (lo crea el script)
+    'game_library_test'     = @{ TempArg = $true }
+    'ps4_directory_test'    = @{ TempArg = $true }
+    'jaguar_simd_test'      = @{ Inc = @('3rdparty/asmjit/asmjit/src') }
+    'overlay_audio_test'    = @{ Inc = @('ps4-port/tests/overlay-audio-mocks'); Src = @('rpcs3/Emu/RSX/Overlays/overlay_audio.cpp') }
+    'virtual_memory_test'   = @{ Src = @('ps4-port/runtime/ps4_virtual_memory.cpp') }
+    'shared_memory_test'    = @{ Src = @('ps4-port/runtime/ps4_virtual_memory.cpp', 'ps4-port/runtime/ps4_shared_memory.cpp') }
     'disc_key_test'         = @{ Skip = 'necesita objetos de zlib (ver cabecera del test)' }
     'patches_test'          = @{ Skip = 'necesita yaml-cpp (ver cabecera del test)' }
     'rpcn_account_test'     = @{ Skip = 'necesita wolfSSL (ver cabecera del test)' }
     'orbis_mmap_trim_test'  = @{ Skip = 'necesita orbis-compat y mocks propios (ver cabecera)' }
     'pad_slots_test'        = @{ Skip = 'se compila desde ps4-port/ con -I../rpcs3' }
+    'capture_adapter_test'  = @{ Skip = 'necesita el SDK de OpenOrbis (orbis/Sysmodule.h), OpenAL y FFmpeg' }
+    'usb_adapter_test'      = @{ Skip = 'necesita el SDK de OpenOrbis (orbis/Sysmodule.h) y libusb' }
 }
 
 $reqFile = 'ps4-port/tests/ci-required.txt'
@@ -76,7 +85,13 @@ $results = $tests | ForEach-Object -ThrottleLimit $Jobs -Parallel {
             $r.Detail = if ($err) { $err.Line.Trim() } else { 'ver ' + "$name.compile.log" }
         } else {
             $ro = Join-Path $outAbs "$name.run.out.log"; $re = Join-Path $outAbs "$name.run.err.log"
-            $p = Start-Process -FilePath $exe -WorkingDirectory $root -PassThru -NoNewWindow -RedirectStandardOutput $ro -RedirectStandardError $re
+            $sp = @{ FilePath = $exe; WorkingDirectory = $root; PassThru = $true; NoNewWindow = $true; RedirectStandardOutput = $ro; RedirectStandardError = $re }
+            if ($s.ContainsKey('TempArg')) {
+                $fx = Join-Path $outAbs "fixture-$name"
+                if (Test-Path $fx) { Remove-Item $fx -Recurse -Force }
+                $sp.ArgumentList = "`"$fx`""
+            }
+            $p = Start-Process @sp
             if (-not $p.WaitForExit($timeout * 1000)) {
                 try { $p.Kill($true) } catch {}
                 $r.Status = 'TIMEOUT'; $r.Detail = "mas de $timeout s"
