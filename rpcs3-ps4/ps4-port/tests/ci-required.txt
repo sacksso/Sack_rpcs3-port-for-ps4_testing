@@ -1,0 +1,4 @@
+# Tests que hacen fallar el CI si no pasan: uno por linea, nombre del archivo sin .cpp (por ejemplo policy_test).
+# Vacio al principio: primero se ve que pasa y que no; despues se promueven los estables.
+# policy_test
+# safe_mode_test
