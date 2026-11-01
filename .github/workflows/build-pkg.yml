@@ -182,7 +182,7 @@ jobs:
           if (-not $v) { throw 'No pude leer la version de ps4_build_version.hpp' }
           "VERSION=$v" >> $env:GITHUB_ENV
           $ninja = "$PWD/ps4-port/.build-tools/ninja.exe"
-          cmake -S . -B ps4-port/.build-abi -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DRPCS3_PS4_PORT=ON -DCMAKE_TOOLCHAIN_FILE=ps4-port/toolchain.cmake "-DRPCS3_PS4_SDK=$env:SDK" "-DRPCS3_PS4_LLVM_BIN=$env:LLVM_BIN" -DRPCS3_PS4_WITH_LLVM=ON 2>&1 | Tee-Object C:\logs\configure.log
+          cmake -S . -B ps4-port/.build-abi -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninja" -DRPCS3_PS4_PORT=ON "-DCMAKE_TOOLCHAIN_FILE=ps4-port/toolchain.cmake" "-DRPCS3_PS4_SDK=$env:SDK" "-DRPCS3_PS4_LLVM_BIN=$env:LLVM_BIN" -DRPCS3_PS4_WITH_LLVM=ON 2>&1 | Tee-Object C:\logs\configure.log
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Compilar el ELF
