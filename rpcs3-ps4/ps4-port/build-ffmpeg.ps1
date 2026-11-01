@@ -11,7 +11,16 @@ $ErrorActionPreference = 'Stop'
 $source = Join-Path $PSScriptRoot 'deps/ffmpeg'
 $revision = '239f2c733de417201d7ad3b3b8b0d9b63285b2b1' # FFmpeg n8.1.1
 if (!(Test-Path "$source/configure")) {
-    & git -c credential.interactive=never -c http.sslBackend=openssl clone --depth 1 --branch n8.1.1 https://github.com/FFmpeg/FFmpeg.git $source
+    # Ninja ya crea deps/ffmpeg (carpeta de salida de las .a) antes de llegar aqui, y 'git clone'
+    # se niega a usar una carpeta no vacia: se inicializa el repositorio en sitio.
+    New-Item -ItemType Directory -Force $source | Out-Null
+    if (!(Test-Path "$source/.git")) {
+        & git -C $source init
+        if ($LASTEXITCODE) { throw 'FFmpeg git init failed' }
+    }
+    & git -c credential.interactive=never -c http.sslBackend=openssl -C $source fetch --depth 1 https://github.com/FFmpeg/FFmpeg.git tag n8.1.1
+    if ($LASTEXITCODE) { throw 'FFmpeg checkout failed' }
+    & git -C $source checkout -f --detach FETCH_HEAD
     if ($LASTEXITCODE) { throw 'FFmpeg checkout failed' }
 }
 $actual = & git -C $source rev-parse HEAD
