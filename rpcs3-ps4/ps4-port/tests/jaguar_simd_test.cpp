@@ -1,6 +1,7 @@
 #include "util/simd.hpp"
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 
 // These tests exercise inline SIMD arithmetic only, without RPCS3's runtime
 // code generator or thread manager. Disable that unrelated AVX dispatch.
@@ -8,6 +9,14 @@ namespace utils
 {
 u64 _get_main_tid() { return 1; }
 bool has_avx() { return false; }
+}
+
+// simd.hpp pulls in Utilities/JIT.h, whose inline templates reference the global JIT runtime.
+// These tests never generate code, so provide a stub instead of linking JITASM.cpp.
+jit_runtime_base& asmjit::get_global_runtime()
+{
+    std::fputs("jaguar_simd_test: unexpected JIT runtime request\n", stderr);
+    std::abort();
 }
 
 int main()

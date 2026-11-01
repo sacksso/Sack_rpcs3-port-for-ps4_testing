@@ -1,5 +1,5 @@
 # Tests que hacen fallar el CI si no pasan: uno por linea, nombre del archivo sin .cpp (por ejemplo policy_test).
-# Promovidos a requeridos tras la primera ejecucion en verde (34 PASS).
+# Promovidos a requeridos tras ejecuciones en verde (34 PASS en la primera, 40 PASS en la segunda).
 atomic_event_test
 audio_conceal_test
 audio_policy_test
@@ -8,9 +8,11 @@ cfg_browser_test
 cheats_test
 disc_lock_test
 disc_probe_test
+disc_stream_test
 fenv_test
 fs_eio_test
 fs_repair_test
+game_library_test
 gnm_keepalive_test
 host_wait_test
 i18n_test
@@ -18,12 +20,15 @@ index_skip_restart_test
 lifecycle_test
 llvm_process_symbols_test
 mem_budget_test
+overlay_audio_test
 pkg_check_test
 policy_test
+ps4_directory_test
 random_bytes_test
 rsx_programs_test
 safe_mode_test
 semaphore_test
+shared_memory_test
 signal_context_test
 spu_memory_bound_test
 spu_object_cache_test
@@ -31,6 +36,7 @@ thread_priority_test
 tsc_div_test
 usb_midi_decoder_test
 vdec_convert_test
+virtual_memory_test
 vram_policy_test
 xmb_folders_test
 xmb_media_test
