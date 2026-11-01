@@ -37,7 +37,7 @@ $spec = @{
     # Estos dos reciben como argumento un directorio temporal que no debe existir (lo crea el script)
     'game_library_test'     = @{ TempArg = $true }
     'ps4_directory_test'    = @{ TempArg = $true }
-    'jaguar_simd_test'      = @{ Inc = @('3rdparty/asmjit/asmjit/src') }
+    'jaguar_simd_test'      = @{ Skip = 'simd.hpp crea codigo con asmjit al arrancar: necesita las fuentes de asmjit y el runtime de JIT' }
     'overlay_audio_test'    = @{ Inc = @('ps4-port/tests/overlay-audio-mocks'); Src = @('rpcs3/Emu/RSX/Overlays/overlay_audio.cpp') }
     'virtual_memory_test'   = @{ Src = @('ps4-port/runtime/ps4_virtual_memory.cpp') }
     'shared_memory_test'    = @{ Src = @('ps4-port/runtime/ps4_virtual_memory.cpp', 'ps4-port/runtime/ps4_shared_memory.cpp') }
