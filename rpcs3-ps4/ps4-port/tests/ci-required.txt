@@ -1,4 +1,36 @@
 # Tests que hacen fallar el CI si no pasan: uno por linea, nombre del archivo sin .cpp (por ejemplo policy_test).
-# Vacio al principio: primero se ve que pasa y que no; despues se promueven los estables.
-# policy_test
-# safe_mode_test
+# Promovidos a requeridos tras la primera ejecucion en verde (34 PASS).
+atomic_event_test
+audio_conceal_test
+audio_policy_test
+audio_stream_test
+cfg_browser_test
+cheats_test
+disc_lock_test
+disc_probe_test
+fenv_test
+fs_eio_test
+fs_repair_test
+gnm_keepalive_test
+host_wait_test
+i18n_test
+index_skip_restart_test
+lifecycle_test
+llvm_process_symbols_test
+mem_budget_test
+pkg_check_test
+policy_test
+random_bytes_test
+rsx_programs_test
+safe_mode_test
+semaphore_test
+signal_context_test
+spu_memory_bound_test
+spu_object_cache_test
+thread_priority_test
+tsc_div_test
+usb_midi_decoder_test
+vdec_convert_test
+vram_policy_test
+xmb_folders_test
+xmb_media_test
