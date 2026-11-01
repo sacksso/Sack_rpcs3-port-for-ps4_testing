@@ -14,6 +14,12 @@ on:
       - 'orbis-compat/**'
       - '.github/**'
   workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Regex opcional para pruebas host (p. ej. mem_budget_test|rsx_programs_test|safe_mode_test|vram_policy_test). Vacío ejecuta todas.'
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: tests-${{ github.ref }}
@@ -53,7 +59,26 @@ jobs:
       - name: Compilar y ejecutar los tests
         shell: pwsh
         working-directory: rpcs3-ps4
-        run: ./ps4-port/tools/run-host-tests.ps1 -Llvm C:\llvm-mingw\bin
+        env:
+          TEST_FILTER: ${{ github.event.inputs.test_filter || '' }}
+        run: |
+          if ($env:TEST_FILTER) {
+            Write-Host "Filtro de pruebas host: $env:TEST_FILTER"
+            ./ps4-port/tools/run-host-tests.ps1 -Llvm C:\llvm-mingw\bin -Only $env:TEST_FILTER
+          } else {
+            ./ps4-port/tools/run-host-tests.ps1 -Llvm C:\llvm-mingw\bin
+          }
+
+      - name: Aclarar alcance de las métricas
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+            '### Alcance de las pruebas de rendimiento'
+            ''
+            'Estas pruebas host validan lógica y políticas deterministas; el runner Windows no ejecuta el emulador en una PS4 y no mide FPS, frametime ni latencia de consola.'
+            'Para validar rendimiento real, seguir el protocolo de `rpcs3-ps4/ps4-port/TESTAR_NO_PS4.txt` y registrar modelo, juego, escena, renderer, caché fría/caliente y varias repeticiones.'
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
       - name: Subir logs
         if: always()

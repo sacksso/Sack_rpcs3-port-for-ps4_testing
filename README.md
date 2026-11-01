@@ -23,6 +23,7 @@ License version 2 (see [`LICENSE`](LICENSE)).
 | `rpcs3-ps4/rpcs3/ps4_*.cpp`, `rpcs3-ps4/rpcs3/util/ps4_*.hpp` | Console frontend, XMB launcher, settings, memory budget, RPCN, system health and other port code |
 | `orbis-compat/` | The orbis-compat sources the build compiles (POSIX/libkernel compatibility runtime for the PS4), with the port's changes |
 | [`BUILDING.md`](BUILDING.md) | How to build the ELF and the PKG |
+| [`PERFORMANCE_ROADMAP_CLAUDE.md`](PERFORMANCE_ROADMAP_CLAUDE.md) | Performance investigation context, measurement plan, and frame-generation feasibility notes |
 | [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) | Every bundled component and its license |
 | `licenses/` | License texts of components that are built or packaged but whose sources are not in this folder |
 
